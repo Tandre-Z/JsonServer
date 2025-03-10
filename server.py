@@ -185,6 +185,53 @@ async def get_latest(limit: Optional[int] = Query(1, description="返回的最�
     """
     return get_latest_data(limit)
 
+# 添加数据删除函数
+def delete_data(item_id: int) -> Dict:
+    try:
+        # 读取现有数据
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            stored_data = json.load(f)
+        
+        # 查找指定ID的数据
+        item_index = None
+        deleted_item = None
+        for index, item in enumerate(stored_data):
+            if item["id"] == item_id:
+                item_index = index
+                deleted_item = item
+                break
+        
+        if item_index is None:
+            raise DataOperationError(f"未找到ID为{item_id}的数据", 404)
+        
+        # 删除数据
+        stored_data.pop(item_index)
+        
+        # 写回文件
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(stored_data, f, ensure_ascii=False, indent=2)
+            
+        return deleted_item
+    except json.JSONDecodeError:
+        raise DataOperationError("数据文件格式错误", 500)
+    except PermissionError:
+        raise DataOperationError("数据文件访问权限错误", 500)
+    except IOError as e:
+        raise DataOperationError(f"IO错误: {str(e)}", 500)
+    except Exception as e:
+        if isinstance(e, DataOperationError):
+            raise
+        raise DataOperationError(f"删除数据时出错: {str(e)}", 500)
+
+# DELETE端点 - 删除JSON数据
+@app.delete("/data/{item_id}", response_model=Dict)
+async def delete_item(item_id: int):
+    """
+    删除指定ID的JSON数据
+    """
+    deleted_item = delete_data(item_id)
+    return {"message": "数据已成功删除", "item": deleted_item}
+
 # 错误处理增强部分
 # 1. HTTP异常处理
 @app.exception_handler(HTTPException)
