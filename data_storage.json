@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2025-03-10T10:35:42.600626",
+    "data": "rtsdhsdfsfsfgsdgsfhsdh"
+  },
+  {
+    "id": 2,
+    "timestamp": "2025-03-10T10:37:05.939840",
+    "data": "agasdg"
+  },
+  {
+    "id": 3,
+    "timestamp": "2025-03-10T10:07:13.398996",
+    "data": {
+      "name": "测试",
+      "value": 123
+    }
+  }
+]

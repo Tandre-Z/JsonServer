@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httptools
+h11
+websockets
+python-multipart
+email-validator
+pydantic
+pyinstaller 
