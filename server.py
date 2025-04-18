@@ -26,27 +26,32 @@ if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump([], f, ensure_ascii=False)
 
-# 定义数据模型
+# 定义通用数据模型
 class DataItem(BaseModel):
-    # 这里可以根据需要定义你的数据结构
-    # 使用Any允许任何JSON结构
-    data: Any
+    data: Dict[str, Any]  # 存储任意JSON数据
+    id: Optional[str] = None  # 可选的自定义ID
     
     class Config:
         arbitrary_types_allowed = True
 
 # 数据存储函数
-def save_data(data: Any) -> Dict:
+def save_data(data: DataItem) -> Dict:
     try:
         # 读取现有数据
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             stored_data = json.load(f)
         
-        # 添加时间戳和ID
+        # 如果提供了自定义ID，检查是否已存在
+        if data.id is not None:
+            for item in stored_data:
+                if item.get("id") == data.id:
+                    raise DataOperationError(f"ID {data.id} 已存在", 400)
+        
+        # 创建新条目
         entry = {
-            "id": len(stored_data) + 1,
+            "id": data.id or str(len(stored_data) + 1),  # 使用自定义ID或生成新ID
             "timestamp": datetime.now().isoformat(),
-            "data": data
+            "data": data.data
         }
         
         # 追加新数据
@@ -67,16 +72,26 @@ def save_data(data: Any) -> Dict:
         raise DataOperationError(f"存储数据时出错: {str(e)}", 500)
 
 # 数据查询函数
-def get_data(item_id: Optional[int] = None) -> List[Dict]:
+def get_data(
+    id: Optional[str] = None,
+    query: Optional[Dict[str, Any]] = None
+) -> List[Dict]:
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             stored_data = json.load(f)
         
-        if item_id is not None:
-            # 查询特定ID的数据
-            result = [item for item in stored_data if item["id"] == item_id]
+        # 如果提供了ID，直接查询
+        if id is not None:
+            result = [item for item in stored_data if item.get("id") == id]
             if not result:
-                raise HTTPException(status_code=404, detail=f"未找到ID为{item_id}的数据")
+                raise HTTPException(status_code=404, detail=f"未找到ID为{id}的数据")
+            return result
+        
+        # 如果提供了查询条件，进行过滤
+        if query is not None:
+            result = stored_data
+            for key, value in query.items():
+                result = [item for item in result if item.get("data", {}).get(key) == value]
             return result
         
         # 返回所有数据
@@ -86,109 +101,76 @@ def get_data(item_id: Optional[int] = None) -> List[Dict]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读取数据时出错: {str(e)}")
 
-# POST端点 - 接收JSON数据
+# POST端点 - 添加数据
 @app.post("/data", response_model=Dict)
-async def receive_data(item: DataItem):
+async def add_data(item: DataItem):
     """
-    接收JSON数据并保存到本地存储
+    添加新的数据项
     """
-    stored_item = save_data(item.data)
+    stored_item = save_data(item)
     return {"message": "数据已成功保存", "item": stored_item}
 
 # GET端点 - 查询数据
 @app.get("/data", response_model=List[Dict])
-async def query_data(id: Optional[int] = Query(None, description="按ID查询特定数据项")):
+async def query_data(
+    id: Optional[str] = Query(None, description="按ID查询"),
+    query: Optional[str] = Query(None, description="JSON格式的查询条件")
+):
     """
-    查询存储的数据，可选择按ID筛选
+    查询数据，支持按ID查询或使用JSON查询条件
     """
-    return get_data(id)
+    query_dict = None
+    if query:
+        try:
+            query_dict = json.loads(query)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="查询条件格式错误")
+    
+    return get_data(id, query_dict)
 
-# 添加数据更新函数
-def update_data(item_id: int, new_data: Any) -> Dict:
+# PUT端点 - 更新数据
+@app.put("/data/{item_id}", response_model=Dict)
+async def update_data(item_id: str, item: DataItem):
+    """
+    更新指定ID的数据
+    """
     try:
-        # 读取现有数据
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             stored_data = json.load(f)
         
         # 查找指定ID的数据
         item_index = None
-        for index, item in enumerate(stored_data):
-            if item["id"] == item_id:
+        for index, stored_item in enumerate(stored_data):
+            if stored_item.get("id") == item_id:
                 item_index = index
                 break
         
         if item_index is None:
             raise DataOperationError(f"未找到ID为{item_id}的数据", 404)
         
-        # 更新数据，保留原始ID和添加新的时间戳
+        # 更新数据
         updated_item = {
             "id": item_id,
             "timestamp": datetime.now().isoformat(),
-            "data": new_data
+            "data": item.data
         }
         
-        # 替换数据
         stored_data[item_index] = updated_item
         
-        # 写回文件
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(stored_data, f, ensure_ascii=False, indent=2)
             
-        return updated_item
-    except json.JSONDecodeError:
-        raise DataOperationError("数据文件格式错误", 500)
-    except PermissionError:
-        raise DataOperationError("数据文件访问权限错误", 500)
-    except IOError as e:
-        raise DataOperationError(f"IO错误: {str(e)}", 500)
+        return {"message": "数据已成功更新", "item": updated_item}
     except Exception as e:
-        if isinstance(e, DataOperationError):
-            raise
         raise DataOperationError(f"更新数据时出错: {str(e)}", 500)
 
-# PUT端点 - 更新JSON数据
-@app.put("/data/{item_id}", response_model=Dict)
-async def update_item(item_id: int, item: DataItem):
+# DELETE端点 - 删除数据
+@app.delete("/data/{item_id}", response_model=Dict)
+async def delete_data(item_id: str):
     """
-    更新指定ID的JSON数据
+    删除指定ID的数据
     """
-    updated_item = update_data(item_id, item.data)
-    return {"message": "数据已成功更新", "item": updated_item}
-
-# 获取最新数据函数
-def get_latest_data(limit: Optional[int] = None) -> List[Dict]:
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            stored_data = json.load(f)
-        
-        if not stored_data:
-            return []
-        
-        # 按时间戳排序，最新的在前面
-        sorted_data = sorted(stored_data, key=lambda x: x["timestamp"], reverse=True)
-        
-        # 如果指定了limit，则返回指定数量的最新数据
-        if limit is not None and limit > 0:
-            return sorted_data[:limit]
-        
-        return sorted_data
-    except json.JSONDecodeError:
-        raise DataOperationError("数据文件格式错误", 500)
-    except Exception as e:
-        raise DataOperationError(f"获取最新数据时出错: {str(e)}", 500)
-
-# GET端点 - 获取最新数据
-@app.get("/data/latest", response_model=List[Dict])
-async def get_latest(limit: Optional[int] = Query(1, description="返回的最新数据条数，默认为1")):
-    """
-    获取最新的数据，按时间戳排序
-    """
-    return get_latest_data(limit)
-
-# 添加数据删除函数
-def delete_data(item_id: int) -> Dict:
-    try:
-        # 读取现有数据
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             stored_data = json.load(f)
         
@@ -196,7 +178,7 @@ def delete_data(item_id: int) -> Dict:
         item_index = None
         deleted_item = None
         for index, item in enumerate(stored_data):
-            if item["id"] == item_id:
+            if item.get("id") == item_id:
                 item_index = index
                 deleted_item = item
                 break
@@ -204,33 +186,14 @@ def delete_data(item_id: int) -> Dict:
         if item_index is None:
             raise DataOperationError(f"未找到ID为{item_id}的数据", 404)
         
-        # 删除数据
         stored_data.pop(item_index)
         
-        # 写回文件
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(stored_data, f, ensure_ascii=False, indent=2)
             
-        return deleted_item
-    except json.JSONDecodeError:
-        raise DataOperationError("数据文件格式错误", 500)
-    except PermissionError:
-        raise DataOperationError("数据文件访问权限错误", 500)
-    except IOError as e:
-        raise DataOperationError(f"IO错误: {str(e)}", 500)
+        return {"message": "数据已成功删除", "item": deleted_item}
     except Exception as e:
-        if isinstance(e, DataOperationError):
-            raise
         raise DataOperationError(f"删除数据时出错: {str(e)}", 500)
-
-# DELETE端点 - 删除JSON数据
-@app.delete("/data/{item_id}", response_model=Dict)
-async def delete_item(item_id: int):
-    """
-    删除指定ID的JSON数据
-    """
-    deleted_item = delete_data(item_id)
-    return {"message": "数据已成功删除", "item": deleted_item}
 
 # 错误处理增强部分
 # 1. HTTP异常处理

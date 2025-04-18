@@ -1,9 +1,13 @@
 import PyInstaller.__main__
 import os
 
+# 获取当前脚本所在目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+main_path = os.path.join(current_dir, 'main.py')
+
 # 打包命令
 PyInstaller.__main__.run([
-    'main.py',                      # 入口文件
+    main_path,                      # 入口文件
     '--name=JsonServer',            # 生成的exe名称
     '--onefile',                    # 单文件模式
     '--console',                    # 显示控制台
