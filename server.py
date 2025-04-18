@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Generic, TypeVar
 import json
 import os
 from datetime import datetime
@@ -25,6 +25,15 @@ DATA_FILE = CONFIG["storage"]["data_file"]
 if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump([], f, ensure_ascii=False)
+
+# 定义通用响应模型
+T = TypeVar('T')
+
+class ResponseModel(BaseModel, Generic[T]):
+    code: int
+    message: str
+    success: bool
+    data: Optional[T] = None
 
 # 定义通用数据模型
 class DataItem(BaseModel):
@@ -102,16 +111,21 @@ def get_data(
         raise HTTPException(status_code=500, detail=f"读取数据时出错: {str(e)}")
 
 # POST端点 - 添加数据
-@app.post("/data", response_model=Dict)
+@app.post("/data", response_model=ResponseModel[Dict])
 async def add_data(item: DataItem):
     """
     添加新的数据项
     """
     stored_item = save_data(item)
-    return {"message": "数据已成功保存", "item": stored_item}
+    return ResponseModel(
+        code=200,
+        message="数据已成功保存",
+        success=True,
+        data=stored_item
+    )
 
 # GET端点 - 查询数据
-@app.get("/data", response_model=List[Dict])
+@app.get("/data", response_model=ResponseModel[List[Dict]])
 async def query_data(
     id: Optional[str] = Query(None, description="按ID查询"),
     query: Optional[str] = Query(None, description="JSON格式的查询条件")
@@ -126,10 +140,16 @@ async def query_data(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="查询条件格式错误")
     
-    return get_data(id, query_dict)
+    data = get_data(id, query_dict)
+    return ResponseModel(
+        code=200,
+        message="查询成功",
+        success=True,
+        data=data
+    )
 
 # PUT端点 - 更新数据
-@app.put("/data/{item_id}", response_model=Dict)
+@app.put("/data/{item_id}", response_model=ResponseModel[Dict])
 async def update_data(item_id: str, item: DataItem):
     """
     更新指定ID的数据
@@ -160,12 +180,17 @@ async def update_data(item_id: str, item: DataItem):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(stored_data, f, ensure_ascii=False, indent=2)
             
-        return {"message": "数据已成功更新", "item": updated_item}
+        return ResponseModel(
+            code=200,
+            message="数据已成功更新",
+            success=True,
+            data=updated_item
+        )
     except Exception as e:
         raise DataOperationError(f"更新数据时出错: {str(e)}", 500)
 
 # DELETE端点 - 删除数据
-@app.delete("/data/{item_id}", response_model=Dict)
+@app.delete("/data/{item_id}", response_model=ResponseModel[Dict])
 async def delete_data(item_id: str):
     """
     删除指定ID的数据
@@ -191,7 +216,12 @@ async def delete_data(item_id: str):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(stored_data, f, ensure_ascii=False, indent=2)
             
-        return {"message": "数据已成功删除", "item": deleted_item}
+        return ResponseModel(
+            code=200,
+            message="数据已成功删除",
+            success=True,
+            data=deleted_item
+        )
     except Exception as e:
         raise DataOperationError(f"删除数据时出错: {str(e)}", 500)
 
@@ -204,7 +234,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={
             "code": exc.status_code,
             "message": exc.detail,
-            "success": False
+            "success": False,
+            "data": None
         },
     )
 
@@ -225,7 +256,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "code": status.HTTP_422_UNPROCESSABLE_ENTITY,
             "message": "数据验证错误",
             "details": error_details,
-            "success": False
+            "success": False,
+            "data": None
         },
     )
 
@@ -237,7 +269,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
             "message": f"服务器内部错误: {str(exc)}",
-            "success": False
+            "success": False,
+            "data": None
         },
     )
 
@@ -255,7 +288,8 @@ async def data_operation_exception_handler(request: Request, exc: DataOperationE
         content={
             "code": exc.code,
             "message": exc.detail,
-            "success": False
+            "success": False,
+            "data": None
         },
     )
 
